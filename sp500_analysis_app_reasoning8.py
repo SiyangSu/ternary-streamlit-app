@@ -84,24 +84,41 @@ def highlight_returns(val):
 # --- Mistral AI API ---
 MISTRAL_API_KEY = "BgfhLyWb2ghTEaKJnIigbq45JalZlEJD"  # Replace with your API key
 
-def get_ai_reasoning(company_name, price_change, start_date, end_date):
-    """Call Mistral AI to generate reasoning for why the company moved."""
+def get_ai_reasoning(company_name, price_change, start_date, end_date, index_choice="S&P 500"):
+    """Call Mistral AI to generate reasoning for why the company moved, with Chinese translation for CSI300."""
     url = "https://api.mistral.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json"
     }
+
+    # Base English prompt
+    prompt_en = (
+        f"Explain in 4 sentences or less why {company_name} stock moved {price_change:.2f}% between {start_date} and {end_date}. "
+        "Only include specific news, events, or announcements that contributed to the rise or fall. "
+        "Include specific information like company name and dates."
+    )
+
+    if index_choice == "CSI 300":
+        # Wrap with translation instructions for China-specific search
+        user_prompt = (
+            f"Translate the following prompt to Chinese, fetch relevant Chinese news or announcements for the stock, "
+            f"and provide the reasoning in Chinese:\n{prompt_en}\n\n"
+            "Then translate the Chinese reasoning back to English for output. "
+            "Output only the english reasoning, omit all intermediate chinese. "
+        )
+    else:
+        user_prompt = prompt_en
+
     data = {
         "model": "mistral-tiny",
         "messages": [
             {"role": "system", "content": "You are a financial analyst explaining stock movements."},
-            {"role": "user",
-             "content": f"Explain in 1-2 short sentences why {company_name} stock moved {price_change:.2f}% between {start_date} and {end_date}. "
-                        f"Only mention specific news, events, or announcements that contributed to the rise or fall and include all source details like dates, company name and so on. "
-                        f"Do NOT speculate or say 'maybe' or 'could have'."}
+            {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.7
     }
+
     try:
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
@@ -111,31 +128,43 @@ def get_ai_reasoning(company_name, price_change, start_date, end_date):
         return f"Error fetching reasoning: {e}"
 
 # --- Display top/bottom movers with AI reasoning ---
-def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_date, end_date, ascending=False):
-    """
-    Displays Top/Bottom 10 stocks with Industry column and AI-generated reasoning.
-    """
+def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_date, end_date, index_choice, ascending=False):
+    # Prepare top/bottom 10 dataframe
     df = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df['Avg Volume'] = df['Ticker'].map(avg_volume)
     df = df.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
-    df = df[['Ticker', 'Security', 'GICS Sector', 'Return', 'Avg Volume']].sort_values(by='Return', ascending=ascending).head(10)
+    # Include Industry column
+    df = df[['Ticker', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Return', 'Avg Volume']].sort_values(by='Return', ascending=ascending).head(10)
     df.reset_index(drop=True, inplace=True)
     df.index += 1
 
-    # Display table
+    # Display table with green/red formatting
     st.subheader(title)
-    styled_df = df.style.format({'Return': '{:.2f}%', 'Avg Volume': '{:,.0f}'}).applymap(highlight_returns, subset=['Return'])
-    st.dataframe(styled_df, use_container_width=True)
+    st.dataframe(
+        df.style.format({'Return':'{:.2f}%', 'Avg Volume':'{:,.0f}'}).applymap(highlight_returns, subset=['Return']),
+        use_container_width=True
+    )
 
-    # Display AI reasoning below table
+    # Display AI reasoning for each company
     for i, row in df.iterrows():
         ticker = row['Ticker']
         company = row['Security']
-        price_change = row['Return']
-        st.markdown(f"**{i}. {ticker} ({company}) — Change: {price_change:.2f}%**")
-        reasoning = get_ai_reasoning(company, price_change, start_date, end_date)
-        st.markdown(f"*AI reasoning:* {reasoning}")
+        industry = row['GICS Sub-Industry']
+        change = row['Return']
+        reasoning = get_ai_reasoning(company, change, start_date, end_date, index_choice=index_choice)
+        st.markdown(f"**AI reasoning for {ticker} ({company}, {industry}):** {reasoning}")
         st.markdown("---")
+
+    # --- Aggregated summary for all top/bottom companies ---
+    top_bottom_summary = "Summarize the overall performance of these companies:\n\n"
+    for _, row in df.iterrows():
+        top_bottom_summary += f"{row['Ticker']} ({row['Security']}, {row['GICS Sub-Industry']}): {row['Return']:.2f}%\n"
+    top_bottom_summary += (f"\nExplain overall trends of these 10 companies, highlighting why particular industries "
+                           f"performed well or poorly between {start_date} and {end_date}.")
+
+    summary_reasoning = get_ai_reasoning("Top/Bottom companies summary", 0, start_date, end_date, index_choice=index_choice)
+    st.markdown("### Overall Performance Summary")
+    st.markdown(summary_reasoning)
 
 # --- Sidebar controls ---
 st.sidebar.title("Index Selector")
@@ -175,11 +204,12 @@ tab1, tab2, tab3 = st.tabs(["🏆 Top Movers", "📊 Group Performance", "🔍 T
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
-        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Gainers", start_date, end_date, ascending=False)
+        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Gainers", start_date, end_date, index_choice=index_choice, ascending=False)
     with col2:
-        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Losers", start_date, end_date, ascending=True)
+        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Losers", start_date, end_date, index_choice=index_choice, ascending=True)
 
 with tab2:
+    # Optional: show sector performance
     df_perf = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df_perf['Avg Volume'] = df_perf['Ticker'].map(avg_volume)
     df_perf = df_perf.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
