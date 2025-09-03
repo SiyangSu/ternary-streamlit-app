@@ -104,7 +104,8 @@ def get_ai_reasoning(company_name, price_change, start_date, end_date, index_cho
         user_prompt = (
             f"Translate the following prompt to Chinese, fetch relevant Chinese news or announcements for the stock, "
             f"and provide the reasoning in Chinese:\n{prompt_en}\n\n"
-            "Then translate the Chinese reasoning back to English for output."
+            "Then translate the Chinese reasoning back to English for output. "
+            "Output only the english reasoning, omit all intermediate chinese. "
         )
     else:
         user_prompt = prompt_en
