@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -6,6 +7,9 @@ import requests
 
 # --- Page config ---
 st.set_page_config(layout="wide", page_title="Index Performance Analyzer")
+
+# --- load API key ---
+api_key = os.getenv("API_KEY")
 
 # --- Load S&P500 data ---
 @st.cache_data
@@ -82,7 +86,7 @@ def highlight_returns(val):
     return f'color: {color}; font-weight: bold'
 
 # --- Mistral AI API ---
-MISTRAL_API_KEY = "BgfhLyWb2ghTEaKJnIigbq45JalZlEJD"  # Replace with your API key
+MISTRAL_API_KEY = api_key  #Replace with your API key
 
 def get_ai_reasoning(company_name, price_change, start_date, end_date, index_choice="S&P 500"):
     """Call Mistral AI to generate reasoning for why the company moved, with Chinese translation for CSI300."""
