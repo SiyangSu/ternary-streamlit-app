@@ -9,8 +9,8 @@ import openai
 st.set_page_config(layout="wide", page_title="Index Performance Analyzer")
 
 # --- Load OpenAI API key ---
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 
 # --- Load S&P500 data ---
