@@ -4,3 +4,4 @@ pandas
 feedparser
 openpyxl
 lxml
+openai
