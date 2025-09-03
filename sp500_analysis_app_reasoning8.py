@@ -3,13 +3,15 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
-import requests
+import openai
 
 # --- Page config ---
 st.set_page_config(layout="wide", page_title="Index Performance Analyzer")
 
-# --- load API key ---
-api_key = os.getenv("API_KEY")
+# --- Load OpenAI API key ---
+#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
 
 # --- Load S&P500 data ---
 @st.cache_data
@@ -23,6 +25,7 @@ def get_sp500_metadata():
     })
     cols = ["Symbol", "Security", "GICS Sector", "GICS Sub-Industry"]
     return df[cols]
+
 
 # --- Load CSI300 data ---
 @st.cache_data
@@ -51,6 +54,7 @@ def load_csi300_metadata():
         columns={"Company": "Security", "Sector": "GICS Sector", "Industry Group": "GICS Sub-Industry"}
     )
 
+
 # --- Download price data ---
 @st.cache_data
 def get_price_data(tickers, start_date, end_date):
@@ -71,6 +75,7 @@ def get_price_data(tickers, start_date, end_date):
             continue
     return price_data
 
+
 # --- Compute performance ---
 def compute_performance(price_data):
     perf = {}
@@ -80,21 +85,16 @@ def compute_performance(price_data):
         avg_volume[ticker] = df['Volume'].mean()
     return perf, avg_volume
 
+
 # --- Highlight returns ---
 def highlight_returns(val):
     color = 'green' if val > 0 else 'red'
     return f'color: {color}; font-weight: bold'
 
-# --- Mistral AI API ---
-MISTRAL_API_KEY = api_key  #Replace with your API key
 
+# --- OpenAI AI API ---
 def get_ai_reasoning(company_name, price_change, start_date, end_date, index_choice="S&P 500"):
-    """Call Mistral AI to generate reasoning for why the company moved, with Chinese translation for CSI300."""
-    url = "https://api.mistral.ai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    """Call OpenAI to generate reasoning for why the company moved, with Chinese translation for CSI300."""
 
     # Base English prompt
     prompt_en = (
@@ -109,43 +109,45 @@ def get_ai_reasoning(company_name, price_change, start_date, end_date, index_cho
             f"Translate the following prompt to Chinese, fetch relevant Chinese news or announcements for the stock, "
             f"and provide the reasoning in Chinese:\n{prompt_en}\n\n"
             "Then translate the Chinese reasoning back to English for output. "
-            "Output only the english reasoning, omit all intermediate chinese. "
+            "Output only the English reasoning, omit all intermediate Chinese."
         )
     else:
         user_prompt = prompt_en
 
-    data = {
-        "model": "mistral-tiny",
-        "messages": [
-            {"role": "system", "content": "You are a financial analyst explaining stock movements."},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.7
-    }
+    messages = [
+        {"role": "system", "content": "You are a financial analyst explaining stock movements."},
+        {"role": "user", "content": user_prompt}
+    ]
 
     try:
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=300
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"Error fetching reasoning: {e}"
 
+
 # --- Display top/bottom movers with AI reasoning ---
-def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_date, end_date, index_choice, ascending=False):
+def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_date, end_date, index_choice,
+                               ascending=False):
     # Prepare top/bottom 10 dataframe
     df = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df['Avg Volume'] = df['Ticker'].map(avg_volume)
     df = df.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
-    # Include Industry column
-    df = df[['Ticker', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Return', 'Avg Volume']].sort_values(by='Return', ascending=ascending).head(10)
+    df = df[['Ticker', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Return', 'Avg Volume']].sort_values(by='Return',
+                                                                                                            ascending=ascending).head(
+        10)
     df.reset_index(drop=True, inplace=True)
     df.index += 1
 
     # Display table with green/red formatting
     st.subheader(title)
     st.dataframe(
-        df.style.format({'Return':'{:.2f}%', 'Avg Volume':'{:,.0f}'}).applymap(highlight_returns, subset=['Return']),
+        df.style.format({'Return': '{:.2f}%', 'Avg Volume': '{:,.0f}'}).applymap(highlight_returns, subset=['Return']),
         use_container_width=True
     )
 
@@ -166,9 +168,11 @@ def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_d
     top_bottom_summary += (f"\nExplain overall trends of these 10 companies, highlighting why particular industries "
                            f"performed well or poorly between {start_date} and {end_date}.")
 
-    summary_reasoning = get_ai_reasoning("Top/Bottom companies summary", 0, start_date, end_date, index_choice=index_choice)
+    summary_reasoning = get_ai_reasoning("Top/Bottom companies summary", 0, start_date, end_date,
+                                         index_choice=index_choice)
     st.markdown("### Overall Performance Summary")
     st.markdown(summary_reasoning)
+
 
 # --- Sidebar controls ---
 st.sidebar.title("Index Selector")
@@ -208,16 +212,18 @@ tab1, tab2, tab3 = st.tabs(["🏆 Top Movers", "📊 Group Performance", "🔍 T
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
-        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Gainers", start_date, end_date, index_choice=index_choice, ascending=False)
+        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Gainers", start_date, end_date,
+                                   index_choice=index_choice, ascending=False)
     with col2:
-        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Losers", start_date, end_date, index_choice=index_choice, ascending=True)
+        display_top_movers_with_ai(performance, avg_volume, metadata, "Top 10 Losers", start_date, end_date,
+                                   index_choice=index_choice, ascending=True)
 
 with tab2:
     # Optional: show sector performance
     df_perf = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df_perf['Avg Volume'] = df_perf['Ticker'].map(avg_volume)
     df_perf = df_perf.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
-    group_perf = df_perf.groupby('GICS Sector').agg({'Return':'mean', 'Avg Volume':'mean'}).round(2)
+    group_perf = df_perf.groupby('GICS Sector').agg({'Return': 'mean', 'Avg Volume': 'mean'}).round(2)
     st.subheader("Sector Performance")
     st.dataframe(group_perf)
 

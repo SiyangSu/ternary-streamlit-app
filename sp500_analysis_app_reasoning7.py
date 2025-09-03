@@ -9,9 +9,15 @@ import openai
 st.set_page_config(layout="wide", page_title="Index Performance Analyzer")
 
 # --- Load OpenAI API key ---
-#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
+# --- Sidebar: GPT Model Selection ---
+st.sidebar.title("Model Selection")
+gpt_model = st.sidebar.selectbox(
+    "Choose GPT model",
+    ["gpt-3.5-turbo", "gpt-4-turbo"],  # Add future models here if desired
+    index=0  # default to GPT-3.5
+)
 
 # --- Load S&P500 data ---
 @st.cache_data
@@ -25,7 +31,6 @@ def get_sp500_metadata():
     })
     cols = ["Symbol", "Security", "GICS Sector", "GICS Sub-Industry"]
     return df[cols]
-
 
 # --- Load CSI300 data ---
 @st.cache_data
@@ -54,7 +59,6 @@ def load_csi300_metadata():
         columns={"Company": "Security", "Sector": "GICS Sector", "Industry Group": "GICS Sub-Industry"}
     )
 
-
 # --- Download price data ---
 @st.cache_data
 def get_price_data(tickers, start_date, end_date):
@@ -75,7 +79,6 @@ def get_price_data(tickers, start_date, end_date):
             continue
     return price_data
 
-
 # --- Compute performance ---
 def compute_performance(price_data):
     perf = {}
@@ -85,15 +88,13 @@ def compute_performance(price_data):
         avg_volume[ticker] = df['Volume'].mean()
     return perf, avg_volume
 
-
 # --- Highlight returns ---
 def highlight_returns(val):
     color = 'green' if val > 0 else 'red'
     return f'color: {color}; font-weight: bold'
 
-
 # --- OpenAI AI API ---
-def get_ai_reasoning(company_name, price_change, start_date, end_date, index_choice="S&P 500"):
+def get_ai_reasoning(company_name, price_change, start_date, end_date, index_choice="S&P 500", model="gpt-3.5-turbo"):
     """Call OpenAI to generate reasoning for why the company moved, with Chinese translation for CSI300."""
 
     # Base English prompt
@@ -121,7 +122,7 @@ def get_ai_reasoning(company_name, price_change, start_date, end_date, index_cho
 
     try:
         response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=messages,
             temperature=0.7,
             max_tokens=300
@@ -130,7 +131,6 @@ def get_ai_reasoning(company_name, price_change, start_date, end_date, index_cho
     except Exception as e:
         return f"Error fetching reasoning: {e}"
 
-
 # --- Display top/bottom movers with AI reasoning ---
 def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_date, end_date, index_choice,
                                ascending=False):
@@ -138,9 +138,8 @@ def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_d
     df = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df['Avg Volume'] = df['Ticker'].map(avg_volume)
     df = df.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
-    df = df[['Ticker', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Return', 'Avg Volume']].sort_values(by='Return',
-                                                                                                            ascending=ascending).head(
-        10)
+    df = df[['Ticker', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Return', 'Avg Volume']].sort_values(
+        by='Return', ascending=ascending).head(10)
     df.reset_index(drop=True, inplace=True)
     df.index += 1
 
@@ -157,7 +156,7 @@ def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_d
         company = row['Security']
         industry = row['GICS Sub-Industry']
         change = row['Return']
-        reasoning = get_ai_reasoning(company, change, start_date, end_date, index_choice=index_choice)
+        reasoning = get_ai_reasoning(company, change, start_date, end_date, index_choice=index_choice, model=gpt_model)
         st.markdown(f"**AI reasoning for {ticker} ({company}, {industry}):** {reasoning}")
         st.markdown("---")
 
@@ -169,10 +168,9 @@ def display_top_movers_with_ai(performance, avg_volume, metadata, title, start_d
                            f"performed well or poorly between {start_date} and {end_date}.")
 
     summary_reasoning = get_ai_reasoning("Top/Bottom companies summary", 0, start_date, end_date,
-                                         index_choice=index_choice)
+                                         index_choice=index_choice, model=gpt_model)
     st.markdown("### Overall Performance Summary")
     st.markdown(summary_reasoning)
-
 
 # --- Sidebar controls ---
 st.sidebar.title("Index Selector")
@@ -219,11 +217,10 @@ with tab1:
                                    index_choice=index_choice, ascending=True)
 
 with tab2:
-    # Optional: show sector performance
     df_perf = pd.DataFrame(performance.items(), columns=['Ticker', 'Return'])
     df_perf['Avg Volume'] = df_perf['Ticker'].map(avg_volume)
     df_perf = df_perf.merge(metadata, left_on='Ticker', right_on='Symbol', how='left')
-    group_perf = df_perf.groupby('GICS Sector').agg({'Return': 'mean', 'Avg Volume': 'mean'}).round(2)
+    group_perf = df_perf.groupby('GICS Sector').agg({'Return':'mean', 'Avg Volume':'mean'}).round(2)
     st.subheader("Sector Performance")
     st.dataframe(group_perf)
 
@@ -233,19 +230,4 @@ with tab3:
     if selected_ticker != "None":
         st.subheader(f"Cumulative % Return for `{selected_ticker}`")
         df = price_data[selected_ticker].copy().round(2)
-        df['Cumulative % Change'] = df['Daily % Change'].cumsum()
-        total_return = df['Daily % Change'].sum()
-        st.line_chart(df['Cumulative % Change'])
-        st.dataframe(df, use_container_width=True)
-        st.markdown(f"**Total Movement:** `{total_return:.2f}%`")
-
-# --- Footer ---
-if price_data:
-    try:
-        latest_date = max(df.index.max() for df in price_data.values())
-        latest_date_str = latest_date.strftime("%Y-%m-%d")
-        st.markdown("---")
-        st.caption(f"Data provided by yfinance • Last updated: {latest_date_str}")
-    except Exception:
-        st.markdown("---")
-        st.caption("Data provided by yfinance • Last updated: Unknown")
+        df['Cumulative % Change'] = df['Daily % Change'].cumsum
